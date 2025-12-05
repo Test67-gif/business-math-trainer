@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { SessionState, Suffix, AnswerRecord } from '../types';
 import { checkAnswer, getNumericAnswer } from '../questionGenerator';
 
@@ -21,12 +21,7 @@ export const QuizScreen: React.FC<QuizScreenProps> = ({
     session.settings.mode === 'timed' ? session.settings.timeLimitSeconds! : 0
   );
   const [showExitConfirm, setShowExitConfirm] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  // Focus input on mount and question change
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, [session.currentQuestion]);
+  const [lastKeyPressed, setLastKeyPressed] = useState<string | null>(null);
 
   // Timer effect for timed mode
   useEffect(() => {
@@ -83,7 +78,6 @@ export const QuizScreen: React.FC<QuizScreenProps> = ({
     setInputValue('');
     setSuffix('none');
 
-    // Check if practice mode is complete
     if (
       session.settings.mode === 'practice' &&
       session.questionsAnsweredCount + 1 >= session.settings.numQuestionsTarget!
@@ -115,11 +109,31 @@ export const QuizScreen: React.FC<QuizScreenProps> = ({
 
   const handleSuffixToggle = (newSuffix: Suffix) => {
     setSuffix(suffix === newSuffix ? 'none' : newSuffix);
+    animateKeyPress(newSuffix);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handleSubmit();
+  const animateKeyPress = (key: string) => {
+    setLastKeyPressed(key);
+    setTimeout(() => setLastKeyPressed(null), 150);
+  };
+
+  const handleNumpadPress = (key: string) => {
+    animateKeyPress(key);
+    
+    if (key === 'backspace') {
+      setInputValue(prev => prev.slice(0, -1));
+    } else if (key === 'clear') {
+      setInputValue('');
+      setSuffix('none');
+    } else if (key === '.') {
+      if (!inputValue.includes('.')) {
+        setInputValue(prev => prev + '.');
+      }
+    } else {
+      // Limit input length
+      if (inputValue.length < 12) {
+        setInputValue(prev => prev + key);
+      }
     }
   };
 
@@ -127,12 +141,14 @@ export const QuizScreen: React.FC<QuizScreenProps> = ({
   const totalAttempted = session.questionsAnsweredCount;
   const accuracy = totalAttempted > 0 ? Math.round((correctCount / totalAttempted) * 100) : 0;
 
+  const canSubmit = inputValue && !isNaN(parseFloat(inputValue));
+
   return (
     <div className="quiz-screen">
       {/* Exit Confirmation Modal */}
       {showExitConfirm && (
-        <div className="modal-overlay">
-          <div className="modal">
+        <div className="modal-overlay" onClick={() => setShowExitConfirm(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
             <h3>Exit Session?</h3>
             <p>Your progress will not be saved.</p>
             <div className="modal-buttons">
@@ -158,23 +174,18 @@ export const QuizScreen: React.FC<QuizScreenProps> = ({
         <div className="quiz-status">
           {session.settings.mode === 'timed' ? (
             <div className={`timer ${timeRemaining <= 30 ? 'timer-warning' : ''}`}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M12 6v6l4 2" />
-              </svg>
-              <span>{formatTime(timeRemaining)}</span>
+              <span className="timer-value">{formatTime(timeRemaining)}</span>
             </div>
           ) : (
             <div className="progress-indicator">
-              <span className="current-q">Q {totalAttempted + 1}</span>
-              <span className="total-q">of {session.settings.numQuestionsTarget}</span>
+              <span className="current-q">{totalAttempted + 1}</span>
+              <span className="total-q">/ {session.settings.numQuestionsTarget}</span>
             </div>
           )}
         </div>
 
         <div className="accuracy-badge">
           <span className="accuracy-value">{accuracy}%</span>
-          <span className="accuracy-label">Acc</span>
         </div>
       </header>
 
@@ -182,10 +193,7 @@ export const QuizScreen: React.FC<QuizScreenProps> = ({
       <div className="question-area">
         <div className="question-meta">
           <span className={`type-badge ${session.currentQuestion.type}`}>
-            {session.currentQuestion.type === 'accurate' ? 'Accurate' : 'Estimate ±10%'}
-          </span>
-          <span className={`difficulty-badge ${session.currentQuestion.difficulty}`}>
-            {session.currentQuestion.difficulty}
+            {session.currentQuestion.type === 'accurate' ? 'Precise' : 'Estimate ±10%'}
           </span>
         </div>
         <div className="question-text">
@@ -193,74 +201,109 @@ export const QuizScreen: React.FC<QuizScreenProps> = ({
         </div>
       </div>
 
-      {/* Answer Area */}
-      <div className="answer-area">
-        <div className="input-container">
-          <input
-            ref={inputRef}
-            type="tel"
-            inputMode="decimal"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Enter number"
-            className="answer-input"
-            autoComplete="off"
-          />
-          
-          <div className="suffix-buttons">
-            {(['K', 'M', 'B'] as Suffix[]).map((s) => (
-              <button
-                key={s}
-                className={`suffix-button ${suffix === s ? 'active' : ''}`}
-                onClick={() => handleSuffixToggle(s)}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
+      {/* Answer Display */}
+      <div className="answer-display-area">
+        <div className="answer-display">
+          <span className="answer-value">{inputValue || '0'}</span>
+          {suffix !== 'none' && <span className="answer-suffix">{suffix}</span>}
         </div>
-
         <div className="answer-preview">
-          <span className="preview-label">Your answer:</span>
-          <span className="preview-value">{getDisplayAnswer()}</span>
+          = {getDisplayAnswer()}
+        </div>
+      </div>
+
+      {/* Suffix Buttons */}
+      <div className="suffix-row">
+        {(['K', 'M', 'B'] as Suffix[]).map((s) => (
+          <button
+            key={s}
+            className={`suffix-btn ${suffix === s ? 'active' : ''} ${lastKeyPressed === s ? 'pressed' : ''}`}
+            onClick={() => handleSuffixToggle(s)}
+          >
+            {s}
+            <span className="suffix-label">
+              {s === 'K' ? 'thousand' : s === 'M' ? 'million' : 'billion'}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {/* Custom Numpad */}
+      <div className="numpad">
+        <div className="numpad-row">
+          {['1', '2', '3'].map(key => (
+            <button
+              key={key}
+              className={`numpad-key ${lastKeyPressed === key ? 'pressed' : ''}`}
+              onClick={() => handleNumpadPress(key)}
+            >
+              {key}
+            </button>
+          ))}
+        </div>
+        <div className="numpad-row">
+          {['4', '5', '6'].map(key => (
+            <button
+              key={key}
+              className={`numpad-key ${lastKeyPressed === key ? 'pressed' : ''}`}
+              onClick={() => handleNumpadPress(key)}
+            >
+              {key}
+            </button>
+          ))}
+        </div>
+        <div className="numpad-row">
+          {['7', '8', '9'].map(key => (
+            <button
+              key={key}
+              className={`numpad-key ${lastKeyPressed === key ? 'pressed' : ''}`}
+              onClick={() => handleNumpadPress(key)}
+            >
+              {key}
+            </button>
+          ))}
+        </div>
+        <div className="numpad-row">
+          <button
+            className={`numpad-key key-dot ${lastKeyPressed === '.' ? 'pressed' : ''}`}
+            onClick={() => handleNumpadPress('.')}
+          >
+            .
+          </button>
+          <button
+            className={`numpad-key ${lastKeyPressed === '0' ? 'pressed' : ''}`}
+            onClick={() => handleNumpadPress('0')}
+          >
+            0
+          </button>
+          <button
+            className={`numpad-key key-backspace ${lastKeyPressed === 'backspace' ? 'pressed' : ''}`}
+            onClick={() => handleNumpadPress('backspace')}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M21 4H8l-7 8 7 8h13a2 2 0 002-2V6a2 2 0 00-2-2z" />
+              <line x1="18" y1="9" x2="12" y2="15" />
+              <line x1="12" y1="9" x2="18" y2="15" />
+            </svg>
+          </button>
         </div>
       </div>
 
       {/* Action Buttons */}
-      <div className="action-buttons">
-        <button
-          className="skip-button"
-          onClick={handleSkip}
-        >
+      <div className="action-row">
+        <button className="action-btn skip-btn" onClick={handleSkip}>
           Skip
         </button>
         <button
-          className="submit-button"
+          className={`action-btn submit-btn ${canSubmit ? 'active' : ''}`}
           onClick={handleSubmit}
-          disabled={!inputValue || isNaN(parseFloat(inputValue))}
+          disabled={!canSubmit}
         >
           Submit
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M5 12h14M12 5l7 7-7 7" />
-          </svg>
         </button>
       </div>
-
-      {/* Progress Bar (Practice Mode) */}
-      {session.settings.mode === 'practice' && (
-        <div className="progress-bar-container">
-          <div
-            className="progress-bar"
-            style={{
-              width: `${((totalAttempted + 1) / session.settings.numQuestionsTarget!) * 100}%`,
-            }}
-          />
-        </div>
-      )}
     </div>
   );
 };
 
 export default QuizScreen;
-
